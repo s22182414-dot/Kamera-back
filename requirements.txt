@@ -11,3 +11,4 @@ aiofiles==24.1.0
 websockets==14.1
 numpy
 gTTS
+google-cloud-texttospeech

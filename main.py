@@ -201,12 +201,43 @@ def ai_chat(payload: ChatRequest):
 # ─── Google TTS Proxy (Uzbek voice) ───────────────
 @app.get("/api/tts")
 def text_to_speech(text: str):
-    """Generate natural Uzbek voice audio using gTTS library."""
+    """Generate Uzbek voice audio using Google Cloud TTS (Neural2/WaveNet) if available, with fallback to gTTS."""
     if not text or len(text.strip()) == 0:
         raise HTTPException(status_code=400, detail="text is required")
 
     clean = text.strip()[:500]
 
+    # Try Google Cloud TTS first if credentials are set
+    has_creds = "GOOGLE_APPLICATION_CREDENTIALS" in os.environ or os.path.exists("google_creds.json")
+    if has_creds:
+        try:
+            if os.path.exists("google_creds.json") and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.abspath("google_creds.json")
+            
+            from google.cloud import texttospeech
+            
+            client = texttospeech.TextToSpeechClient()
+            synthesis_input = texttospeech.SynthesisInput(text=clean)
+            
+            # Request high quality Uzbek voice
+            voice = texttospeech.VoiceSelectionParams(
+                language_code="uz-UZ",
+                ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+            )
+            
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            )
+            
+            response = client.synthesize_speech(
+                input=synthesis_input, voice=voice, audio_config=audio_config
+            )
+            return Response(content=response.audio_content, media_type="audio/mpeg")
+            
+        except Exception as e:
+            print(f"[Google Cloud TTS] Error, falling back to gTTS: {str(e)}")
+
+    # Fallback to free gTTS
     try:
         fp = io.BytesIO()
         tts = gTTS(text=clean, lang='uz', lang_check=False)
