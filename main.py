@@ -1,8 +1,13 @@
 import os
 import json
 import datetime
+import urllib.request
+import urllib.parse
+import io
+from gtts import gTTS
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
@@ -145,6 +150,27 @@ def ai_chat(payload: ChatRequest):
         "reply": reply,
         "events_count": len(events)
     }
+
+
+# ─── Google TTS Proxy (Uzbek voice) ───────────────
+@app.get("/api/tts")
+def text_to_speech(text: str):
+    """Generate natural Uzbek voice audio using gTTS library."""
+    if not text or len(text.strip()) == 0:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    clean = text.strip()[:500]
+
+    try:
+        fp = io.BytesIO()
+        tts = gTTS(text=clean, lang='uz', lang_check=False)
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        audio_data = fp.read()
+        return Response(content=audio_data, media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"TTS service error: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
