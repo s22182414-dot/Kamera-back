@@ -5,12 +5,17 @@ import urllib.request
 import urllib.parse
 import io
 from gtts import gTTS
+from dotenv import load_dotenv
+import google.generativeai as genai
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
+
+load_dotenv()
+
 
 import database as db
 from face_engine import face_engine
@@ -132,17 +137,58 @@ def ai_chat(payload: ChatRequest):
     target_date = payload.date or datetime.date.today().isoformat()
     events = db.get_events(date=target_date, limit=100)
 
-    known_list = [e for e in events if e.get("type") == "face_known"]
-    unknown_count = len([e for e in events if e.get("type") == "face_unknown"])
-    motion_count = len([e for e in events if e.get("type") == "motion"])
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    
+    events_str = ""
+    for idx, e in enumerate(events):
+        person = e.get("person_name") or "Nomu'lum shaxs"
+        conf = f"{e.get('confidence') * 100}%" if e.get("confidence") else "N/A"
+        events_str += f"- Time: {e.get('time')}, Type: {e.get('type')}, Person: {person}, Confidence: {conf}\n"
 
-    names = list(set([e.get("person_name") for e in known_list if e.get("person_name")]))
+    prompt = f"""
+    Siz Kamera AI yordamchisisiz. Ismingiz Aisha.
+    Foydalanuvchining so'rovi: "{payload.message}"
+    
+    Tanlangan sana: {target_date}
+    Ushbu sanadagi voqealar ro'yxati:
+    {events_str if events_str else "Hech qanday harakat yoki voqea qayd etilmagan."}
+    
+    Qoidalar:
+    1. Faqat o'zbek tilida, muloyim va samimiy ohangda javob bering.
+    2. Javobingiz juda ham uzun bo'lmasin (maksimal 3-4 ta qisqa gap). Leksik jihatdan tabiiy va ravon gapiring.
+    3. Agar foydalanuvchi "bugun" yoki "kecha" haqida so'rasa, javobingizda aniq sanani (masalan: 2026-07-16) aytmasdan, faqat "bugun" yoki "kecha" so'zlarini ishlating.
+    4. Savolga mos ravishda yuqoridagi voqealar ro'yxatidan aniq ma'lumotlarni tahlil qilib bering (masalan: kim kelgani, soat nechada kelgani, nechta harakat bo'lgani).
+    """
 
-    reply = f"📅 {target_date} sanasidagi kamera yozuvlari tahlili:\n" \
-            f"• Jami voqealar: {len(events)} ta\n" \
-            f"• Taniqli shaxslar: {len(known_list)} ta ({', '.join(names) if names else 'yoq'})\n" \
-            f"• Noma'lum shaxslar: {unknown_count} ta\n" \
-            f"• Harakatlar: {motion_count} ta"
+    try:
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not configured")
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        reply = response.text.strip()
+    except Exception as e:
+        # Fallback to offline rule-based response
+        known_list = [e for e in events if e.get("type") == "face_known"]
+        unknown_count = len([e for e in events if e.get("type") == "face_unknown"])
+        motion_count = len([e for e in events if e.get("type") == "motion"])
+        names = list(set([e.get("person_name") for e in known_list if e.get("person_name")]))
+        
+        today = datetime.date.today().isoformat()
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        
+        date_word = target_date
+        if target_date == today:
+            date_word = "bugun"
+        elif target_date == yesterday:
+            date_word = "kecha"
+            
+        reply = f"📅 {date_word} sanasidagi kamera yozuvlari tahlili (Offline):\n" \
+                f"• Jami voqealar: {len(events)} ta\n" \
+                f"• Taniqli shaxslar: {len(known_list)} ta ({', '.join(names) if names else 'yoq'})\n" \
+                f"• Noma'lum shaxslar: {unknown_count} ta\n" \
+                f"• Harakatlar: {motion_count} ta"
 
     return {
         "status": "success",
